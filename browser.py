@@ -22,7 +22,7 @@ from PyQt5.QtGui import QIcon, QFont, QKeySequence, QPixmap, QPainter, QColor, Q
 from urllib.parse import urlparse
 from math import ceil
 
-# Circular Loading Indicator
+
 class CircularLoader(QWidget):
     def __init__(self, parent=None, color=QColor(70, 130, 180), penWidth=3, animationDuration=1000):
         super().__init__(parent)
@@ -100,7 +100,7 @@ class CircularLoader(QWidget):
         if self.timer.isActive():
             self.timer.stop()
 
-# FIXED: Properly working Tab Widget with moveable new tab button
+
 class CustomTabWidget(QTabWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -127,18 +127,16 @@ class CustomTabWidget(QTabWidget):
             }
         """)
         
-        # Connect the button to add new tab
         self.new_tab_button.clicked.connect(self.on_new_tab_clicked)
         
-        # Connect signals to update button position
+        
         self.tabBar().tabMoved.connect(self.update_new_tab_button_position)
         self.currentChanged.connect(self.update_new_tab_button_position)
         
-        # Set initial properties
+       
         self.setTabsClosable(True)
         self.setMovable(True)
         
-        # Update button position initially
         self.update_new_tab_button_position()
         
     def on_new_tab_clicked(self):
@@ -149,18 +147,18 @@ class CustomTabWidget(QTabWidget):
     def update_new_tab_button_position(self):
         """Update the position of the new tab button"""
         try:
-            # Calculate total width of all tabs
+            
             total_width = 0
             tab_count = self.tabBar().count()
             
             for i in range(tab_count):
                 total_width += self.tabBar().tabRect(i).width()
             
-            # Position the button right after the last tab
-            button_x = total_width + 2  # Small gap
-            button_y = 2  # Small vertical offset
             
-            # Make sure button doesn't go beyond the widget width
+            button_x = total_width + 2  
+            button_y = 2  
+            
+            
             max_x = self.width() - self.new_tab_button.width() - 5
             if button_x > max_x:
                 button_x = max_x
@@ -186,7 +184,7 @@ class CustomTabWidget(QTabWidget):
         super().tabRemoved(index)
         self.update_new_tab_button_position()
 
-# Custom WebEngine classes with proper context menu
+
 class CustomWebEnginePage(QWebEnginePage):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -222,18 +220,18 @@ class CustomWebEngineView(QWebEngineView):
     def contextMenuEvent(self, event):
         """Handle right-click context menu with proper options"""
         try:
-            # Create standard context menu
+            
             menu = self.page().createStandardContextMenu()
             
             if menu is None:
                 return
                 
-            # Get the hit test result to check if we're over a link
+            
             hit_test = self.page().hitTestContent(event.pos())
             
             actions = menu.actions()
             
-            # Find existing actions and modify them
+            
             for action in actions:
                 if action.text() == "Open link in new window":
                     action.setText("Open Link in New Window")
@@ -248,7 +246,7 @@ class CustomWebEngineView(QWebEngineView):
                 elif "Open link" in action.text():
                     action.setText("Open Link in This Tab")
                     
-            # If we're over a link, ensure new tab/window options are available
+            
             if hasattr(hit_test, 'linkUrl') and not hit_test.linkUrl().isEmpty():
                 link_url = hit_test.linkUrl().toString()
                 
@@ -599,7 +597,7 @@ class SettingsDialog(QDialog):
         self.parent_browser.homepage = self.homepage_edit.text()
         self.parent_browser.download_path = self.download_path_edit.text()
         
-        # Apply JavaScript setting to all tabs
+        
         for i in range(self.parent_browser.tabs.count()):
             tab = self.parent_browser.tabs.widget(i)
             if hasattr(tab, 'webview'):
@@ -652,7 +650,7 @@ class BrowserTab(QWidget):
                 else:
                     url = "https://www.google.com"
             
-            # Use custom WebEngine classes
+           
             if private_mode:
                 profile = QWebEngineProfile()
                 self.webview = CustomWebEngineView()
@@ -664,12 +662,12 @@ class BrowserTab(QWidget):
                 page = CustomWebEnginePage()
                 self.webview.setPage(page)
                 
-            # Set browser window reference for new tab/window functionality
+            
             self.webview.browser_window = self.browser_window
             
             self.webview.setUrl(QUrl(url))
             
-            # Connect signals
+           
             self.webview.loadStarted.connect(self.load_started)
             self.webview.loadProgress.connect(self.load_progress)
             self.webview.loadFinished.connect(self.load_finished)
@@ -686,7 +684,7 @@ class BrowserTab(QWidget):
         layout.addWidget(self.main_container)
         self.setLayout(layout)
         
-        # Initially hide loader
+       
         self.loader_container.hide()
         
     def load_started(self):
@@ -695,7 +693,7 @@ class BrowserTab(QWidget):
         self.circular_loader.start()
         
     def load_progress(self, progress):
-        pass  # Circular loader handles its own animation
+        pass  
         
     def load_finished(self, success):
         self.is_loading = False
@@ -718,33 +716,33 @@ class WebKitBrowser(QMainWindow):
         self.load_history()
         self.setup_shortcuts()
         
-        # Extension manager
+       
         self.extension_manager = ExtensionManager(self)
         
-        # Download manager
+       
         self.download_manager = DownloadManager(self)
         
     def init_ui(self):
         self.setWindowTitle("Enhanced WebKit Browser")
         self.setGeometry(100, 100, 1400, 900)
         
-        # Create menu bar
+       
         self.create_menu_bar()
         
-        # Main widget and layout
+        
         main_widget = QWidget()
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # FIXED: Use custom tab widget with properly working new tab button
+       
         self.tabs = CustomTabWidget(self)
         self.tabs.tabCloseRequested.connect(self.close_current_tab)
         self.tabs.currentChanged.connect(self.update_url_bar)
         
-        # Create toolbar
+        
         self.create_toolbar()
         
-        # Status bar
+        
         self.status_bar = self.statusBar()
         self.status_label = QLabel("Ready")
         self.status_bar.addWidget(self.status_label)
@@ -753,7 +751,7 @@ class WebKitBrowser(QMainWindow):
         main_widget.setLayout(main_layout)
         self.setCentralWidget(main_widget)
         
-        # Start with one tab
+       
         self.add_new_tab()
         
     def apply_styles(self):
@@ -919,7 +917,7 @@ class WebKitBrowser(QMainWindow):
         nav_bar.setMovable(False)
         self.addToolBar(nav_bar)
         
-        # Navigation buttons with better icons
+        
         back_btn = QAction("◀", self)
         back_btn.setToolTip("Go Back")
         back_btn.triggered.connect(self.go_back)
@@ -940,13 +938,13 @@ class WebKitBrowser(QMainWindow):
         home_btn.triggered.connect(self.go_home)
         nav_bar.addAction(home_btn)
         
-        # URL bar with improved styling
+       
         self.url_bar = QLineEdit()
         self.url_bar.setPlaceholderText("Enter URL or search...")
         self.url_bar.returnPressed.connect(self.navigate_to_url)
         nav_bar.addWidget(self.url_bar)
         
-        # Bookmark button
+        
         bookmark_btn = QAction("⭐", self)
         bookmark_btn.setToolTip("Add Bookmark")
         bookmark_btn.triggered.connect(self.add_bookmark)
@@ -1291,7 +1289,7 @@ if __name__ == "__main__":
     QApplication.setAttribute(Qt.AA_DisableHighDpiScaling, True)
     
     app = QApplication(sys.argv)
-    QApplication.setApplicationName("Enhanced WebKit Browser")
+    QApplication.setApplicationName("QTbrowser")
     
     # Additional scaling fixes
     try:
