@@ -2,17 +2,195 @@ import sys
 import json
 import os
 from datetime import datetime
+
+# FIXED: Handle scaling issues before importing PyQt5
+os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
+os.environ["QT_SCALE_FACTOR"] = "1"
+
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QToolBar, QAction, QLineEdit, QTabWidget,
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QMenu, QMenuBar,
     QProgressBar, QLabel, QSplitter, QListWidget, QTextEdit, QPushButton,
     QDialog, QFormLayout, QSpinBox, QCheckBox, QComboBox, QGroupBox,
-    QScrollArea, QFrame, QSizePolicy, QShortcut, QInputDialog
+    QScrollArea, QFrame, QSizePolicy, QShortcut, QInputDialog, QFileDialog
 )
-from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineProfile, QWebEngineSettings
-from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, Qt, QThread, pyqtSlot
-from PyQt5.QtGui import QIcon, QFont, QKeySequence, QPixmap
+from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineProfile, QWebEngineSettings, QWebEnginePage
+from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, Qt, QThread, pyqtSlot, QPropertyAnimation, QRect
+from PyQt5.QtGui import QIcon, QFont, QKeySequence, QPixmap, QPainter, QColor, QGuiApplication
 from urllib.parse import urlparse
+from math import ceil
+
+# Circular Loading Indicator
+class CircularLoader(QWidget):
+    def __init__(self, parent=None, color=QColor(70, 130, 180), penWidth=3, animationDuration=1000):
+        super().__init__(parent)
+        self.color = color
+        self.penWidth = penWidth
+        self.animationDuration = animationDuration
+        self.numberOfLines = 12
+        self.lineLength = 8
+        self.innerRadius = 15
+        self.currentCounter = 0
+        self.isSpinning = False
+        
+        self.setFixedSize(60, 60)
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.rotate)
+        self.hide()
+        
+    def rotate(self):
+        self.currentCounter += 1
+        if self.currentCounter >= self.numberOfLines:
+            self.currentCounter = 0
+        self.update()
+        
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.fillRect(self.rect(), Qt.transparent)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        
+        for i in range(self.numberOfLines):
+            painter.save()
+            painter.translate(self.width() / 2, self.height() / 2)
+            rotateAngle = 360.0 * i / self.numberOfLines
+            painter.rotate(rotateAngle)
+            painter.translate(self.innerRadius, 0)
+            
+            distance = self.lineCountDistanceFromPrimary(i, self.currentCounter, self.numberOfLines)
+            color = self.currentLineColor(distance, self.numberOfLines, 70.0, 20.0, self.color)
+            painter.setBrush(color)
+            painter.drawRoundedRect(0, -self.penWidth // 2, self.lineLength, self.penWidth, 70.0, 70.0)
+            painter.restore()
+            
+    def lineCountDistanceFromPrimary(self, current, primary, totalNrOfLines):
+        distance = primary - current
+        if distance < 0:
+            distance += totalNrOfLines
+        return distance
+        
+    def currentLineColor(self, countDistance, totalNrOfLines, trailFadePerc, minOpacity, color):
+        if countDistance == 0:
+            return color
+            
+        minAlphaF = minOpacity / 100.0
+        distanceThreshold = ceil((totalNrOfLines - 1) * trailFadePerc / 100.0)
+        
+        if countDistance > distanceThreshold:
+            color.setAlphaF(minAlphaF)
+        else:
+            alphaDiff = color.alphaF() - minAlphaF
+            gradient = alphaDiff / (distanceThreshold + 1.0)
+            resultAlpha = color.alphaF() - gradient * countDistance
+            resultAlpha = min(1.0, max(0.0, resultAlpha))
+            color.setAlphaF(resultAlpha)
+        return color
+        
+    def start(self):
+        self.isSpinning = True
+        self.show()
+        if not self.timer.isActive():
+            self.timer.start(1000 // (self.numberOfLines * 2))
+            
+    def stop(self):
+        self.isSpinning = False
+        self.hide()
+        if self.timer.isActive():
+            self.timer.stop()
+
+# FIXED: Custom WebEngine classes to handle new tab/window requests
+class CustomWebEnginePage(QWebEnginePage):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        
+    def createWindow(self, window_type):
+        """Handle requests to open new windows/tabs"""
+        if hasattr(self.view(), 'browser_window'):
+            browser = self.view().browser_window
+            if window_type == QWebEnginePage.WebBrowserTab:
+                # Create new tab
+                new_tab = browser.add_new_tab()
+                return new_tab.webview.page() if new_tab else None
+            elif window_type == QWebEnginePage.WebBrowserWindow:
+                # Create new window (for now, create new tab)
+                new_tab = browser.add_new_tab()
+                return new_tab.webview.page() if new_tab else None
+        return super().createWindow(window_type)
+
+class CustomWebEngineView(QWebEngineView):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.browser_window = None
+        
+    def createWindow(self, window_type):
+        """Handle requests to open new windows/tabs"""
+        if self.browser_window:
+            if window_type == QWebEnginePage.WebBrowserTab:
+                # Create new tab
+                new_tab = self.browser_window.add_new_tab()
+                return new_tab.webview if new_tab else None
+            elif window_type == QWebEnginePage.WebBrowserWindow:
+                # Create new window (for now, create new tab)
+                new_tab = self.browser_window.add_new_tab()
+                return new_tab.webview if new_tab else None
+        return super().createWindow(window_type)
+        
+    def contextMenuEvent(self, event):
+        """FIXED: Handle right-click context menu"""
+        menu = self.page().createStandardContextMenu()
+        
+        # Find and modify existing actions
+        actions = menu.actions()
+        for action in actions:
+            if action.text() == "Open link in new window":
+                action.setText("Open Link in New Window")
+            elif action.text() == "Open link in new tab":
+                action.setText("Open Link in New Tab")
+                
+        menu.popup(event.globalPos())
+
+# Extension Manager
+class ExtensionManager:
+    def __init__(self, browser):
+        self.browser = browser
+        self.extensions = {}
+        self.extension_dir = "extensions"
+        self.load_extensions()
+        
+    def load_extensions(self):
+        if not os.path.exists(self.extension_dir):
+            os.makedirs(self.extension_dir)
+            
+        for filename in os.listdir(self.extension_dir):
+            if filename.endswith('.json'):
+                self.load_extension(filename)
+                
+    def load_extension(self, filename):
+        try:
+            with open(os.path.join(self.extension_dir, filename), 'r') as f:
+                extension_data = json.load(f)
+                self.extensions[extension_data['id']] = extension_data
+                print(f"Loaded extension: {extension_data['name']}")
+        except Exception as e:
+            print(f"Error loading extension {filename}: {e}")
+            
+    def install_extension(self, extension_path):
+        try:
+            with open(extension_path, 'r') as f:
+                extension_data = json.load(f)
+                
+            filename = f"{extension_data['id']}.json"
+            target_path = os.path.join(self.extension_dir, filename)
+            
+            with open(target_path, 'w') as f:
+                json.dump(extension_data, f, indent=2)
+                
+            self.extensions[extension_data['id']] = extension_data
+            QMessageBox.information(self.browser, "Extension Installed", 
+                                  f"Extension '{extension_data['name']}' installed successfully!")
+        except Exception as e:
+            QMessageBox.critical(self.browser, "Error", f"Failed to install extension: {e}")
 
 class DownloadItem(QWidget):
     def __init__(self, download_item):
@@ -230,7 +408,7 @@ class SettingsDialog(QDialog):
         privacy_group = QGroupBox("Privacy")
         privacy_layout = QFormLayout()
         
-        self.private_browsing = QCheckBox("Enable Private Browsing")
+        self.private_browsing = QCheckBox("Enable Private Browsing by Default")
         self.javascript_enabled = QCheckBox("Enable JavaScript")
         self.javascript_enabled.setChecked(True)
         
@@ -274,12 +452,12 @@ class SettingsDialog(QDialog):
         self.close()
 
 class BrowserTab(QWidget):
-    def __init__(self, url="https://www.google.com", private_mode=False):
+    def __init__(self, url="https://www.google.com", private_mode=False, browser_window=None):
         super().__init__()
         self.is_loading = False
         self.private_mode = private_mode
+        self.browser_window = browser_window
         
-        # FIXED: Validate URL parameter type
         if not isinstance(url, str):
             print(f"Warning: Invalid URL type {type(url)}, using default")
             url = "https://www.google.com"
@@ -290,64 +468,79 @@ class BrowserTab(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         
-        # Progress bar
-        self.progress_bar = QProgressBar()
-        self.progress_bar.hide()
-        layout.addWidget(self.progress_bar)
+        # Main container
+        self.main_container = QWidget()
+        main_layout = QVBoxLayout(self.main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Circular loader container
+        self.loader_container = QWidget()
+        self.loader_container.setFixedHeight(80)
+        loader_layout = QHBoxLayout(self.loader_container)
+        loader_layout.setAlignment(Qt.AlignCenter)
+        
+        self.circular_loader = CircularLoader(color=QColor(70, 130, 180))
+        loader_layout.addWidget(self.circular_loader)
         
         try:
-            # FIXED: Additional URL validation before QUrl creation
             if not url or not isinstance(url, str):
                 url = "https://www.google.com"
                 
-            # Ensure URL is properly formatted
             if not url.startswith(('http://', 'https://')):
                 if '.' in url:
                     url = 'https://' + url
                 else:
                     url = "https://www.google.com"
             
-            # FIXED: Proper private profile creation
+            # FIXED: Use custom WebEngine classes
             if private_mode:
-                # Create an off-the-record profile for private browsing
                 profile = QWebEngineProfile()
-                self.webview = QWebEngineView()
-                # FIXED: Create web page without passing webview as parameter
-                page = profile.createWebPage()
+                self.webview = CustomWebEngineView()
+                page = CustomWebEnginePage()
+                page.setProfile(profile)
                 self.webview.setPage(page)
             else:
-                self.webview = QWebEngineView()
+                self.webview = CustomWebEngineView()
+                page = CustomWebEnginePage()
+                self.webview.setPage(page)
                 
-            # FIXED: Safe QUrl creation with validation
+            # FIXED: Set browser window reference for new tab/window functionality
+            self.webview.browser_window = self.browser_window
+            
             self.webview.setUrl(QUrl(url))
             
-            # Connect signals for loading progress
+            # Connect signals
             self.webview.loadStarted.connect(self.load_started)
             self.webview.loadProgress.connect(self.load_progress)
             self.webview.loadFinished.connect(self.load_finished)
             
-            layout.addWidget(self.webview)
+            main_layout.addWidget(self.loader_container)
+            main_layout.addWidget(self.webview)
             
         except Exception as e:
             print(f"Error creating browser tab: {e}")
-            # Fallback to regular webview with default URL
-            self.webview = QWebEngineView()
+            self.webview = CustomWebEngineView()
             self.webview.setUrl(QUrl("https://www.google.com"))
-            layout.addWidget(self.webview)
+            main_layout.addWidget(self.webview)
             
+        layout.addWidget(self.main_container)
         self.setLayout(layout)
+        
+        # Initially hide loader
+        self.loader_container.hide()
         
     def load_started(self):
         self.is_loading = True
-        self.progress_bar.show()
-        self.progress_bar.setValue(0)
+        self.loader_container.show()
+        self.circular_loader.start()
         
     def load_progress(self, progress):
-        self.progress_bar.setValue(progress)
+        pass  # Circular loader handles its own animation
         
     def load_finished(self, success):
         self.is_loading = False
-        self.progress_bar.hide()
+        self.circular_loader.stop()
+        self.loader_container.hide()
 
 class WebKitBrowser(QMainWindow):
     def __init__(self):
@@ -359,10 +552,14 @@ class WebKitBrowser(QMainWindow):
         self.private_mode = False
         
         self.init_ui()
+        self.apply_styles()
         self.load_settings()
         self.load_bookmarks()
         self.load_history()
         self.setup_shortcuts()
+        
+        # Extension manager
+        self.extension_manager = ExtensionManager(self)
         
         # Download manager
         self.download_manager = DownloadManager(self)
@@ -400,6 +597,88 @@ class WebKitBrowser(QMainWindow):
         
         # Start with one tab
         self.add_new_tab()
+        
+    def apply_styles(self):
+        """Apply modern styling to the browser"""
+        style = """
+        QMainWindow {
+            background-color: #f5f5f5;
+        }
+        
+        QTabWidget::pane {
+            border: 1px solid #c0c0c0;
+            background-color: white;
+        }
+        
+        QTabWidget::tab-bar {
+            alignment: left;
+        }
+        
+        QTabBar::tab {
+            background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                      stop: 0 #f0f0f0, stop: 1 #e0e0e0);
+            border: 1px solid #c0c0c0;
+            border-bottom-color: #c0c0c0;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            min-width: 120px;
+            padding: 8px 12px;
+            margin-right: 2px;
+        }
+        
+        QTabBar::tab:selected {
+            background: white;
+            border-bottom-color: white;
+        }
+        
+        QTabBar::tab:hover {
+            background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                      stop: 0 #fafafa, stop: 1 #f0f0f0);
+        }
+        
+        QToolBar {
+            background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
+                                      stop: 0 #ffffff, stop: 1 #f0f0f0);
+            border: none;
+            spacing: 3px;
+            padding: 4px;
+        }
+        
+        QLineEdit {
+            border: 2px solid #ddd;
+            border-radius: 20px;
+            padding: 8px 15px;
+            font-size: 14px;
+            background-color: white;
+        }
+        
+        QLineEdit:focus {
+            border-color: #4CAF50;
+        }
+        
+        QPushButton {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        QPushButton:hover {
+            background-color: #45a049;
+        }
+        
+        QPushButton:pressed {
+            background-color: #3d8b40;
+        }
+        
+        QStatusBar {
+            background-color: #f0f0f0;
+            border-top: 1px solid #ddd;
+        }
+        """
+        self.setStyleSheet(style)
         
     def create_menu_bar(self):
         menubar = self.menuBar()
@@ -466,19 +745,29 @@ class WebKitBrowser(QMainWindow):
         settings_action.triggered.connect(self.show_settings)
         tools_menu.addAction(settings_action)
         
+        # Extensions menu
+        extensions_menu = menubar.addMenu('Extensions')
+        
+        install_extension_action = QAction('Install Extension', self)
+        install_extension_action.triggered.connect(self.install_extension)
+        extensions_menu.addAction(install_extension_action)
+        
+        manage_extensions_action = QAction('Manage Extensions', self)
+        manage_extensions_action.triggered.connect(self.show_extension_manager)
+        extensions_menu.addAction(manage_extensions_action)
+        
     def create_toolbar(self):
-        # Navigation toolbar
         nav_bar = QToolBar()
         nav_bar.setMovable(False)
         self.addToolBar(nav_bar)
         
-        # Navigation buttons
-        back_btn = QAction("←", self)
+        # Navigation buttons with better icons
+        back_btn = QAction("◀", self)
         back_btn.setToolTip("Go Back")
         back_btn.triggered.connect(self.go_back)
         nav_bar.addAction(back_btn)
         
-        forward_btn = QAction("→", self)
+        forward_btn = QAction("▶", self)
         forward_btn.setToolTip("Go Forward")
         forward_btn.triggered.connect(self.go_forward)
         nav_bar.addAction(forward_btn)
@@ -493,26 +782,24 @@ class WebKitBrowser(QMainWindow):
         home_btn.triggered.connect(self.go_home)
         nav_bar.addAction(home_btn)
         
-        # URL bar
+        # URL bar with improved styling
         self.url_bar = QLineEdit()
         self.url_bar.setPlaceholderText("Enter URL or search...")
         self.url_bar.returnPressed.connect(self.navigate_to_url)
         nav_bar.addWidget(self.url_bar)
         
-        # Bookmark button
+        # Action buttons
         bookmark_btn = QAction("⭐", self)
         bookmark_btn.setToolTip("Add Bookmark")
         bookmark_btn.triggered.connect(self.add_bookmark)
         nav_bar.addAction(bookmark_btn)
         
-        # New tab button
-        new_tab_btn = QAction("+", self)
+        new_tab_btn = QAction("➕", self)
         new_tab_btn.setToolTip("New Tab")
         new_tab_btn.triggered.connect(self.add_new_tab)
         nav_bar.addAction(new_tab_btn)
         
     def setup_shortcuts(self):
-        # Additional shortcuts
         refresh_shortcut = QShortcut(QKeySequence("F5"), self)
         refresh_shortcut.activated.connect(self.reload_page)
         
@@ -522,50 +809,38 @@ class WebKitBrowser(QMainWindow):
         find_shortcut = QShortcut(QKeySequence("Ctrl+F"), self)
         find_shortcut.activated.connect(self.show_find_dialog)
         
-    # FIXED: Enhanced add_new_tab method with proper error handling
     def add_new_tab(self, url=None):
         try:
-            # FIXED: Ensure URL is always a string
             if url is None or not isinstance(url, str):
                 url = self.homepage
                 
-            # Additional URL validation
             if not url.strip():
                 url = self.homepage
                 
-            print(f"Creating new tab with URL: {url}, Private mode: {self.private_mode}")
+            # FIXED: Pass browser window reference to tab
+            browser_tab = BrowserTab(url, self.private_mode, self)
             
-            # Create browser tab with validated parameters
-            browser_tab = BrowserTab(url, self.private_mode)
-            
-            # Set tab title
             title = "New Tab"
             if self.private_mode:
                 title = "🔒 Private Tab"
                 
-            # Add tab to widget
             i = self.tabs.addTab(browser_tab, title)
             self.tabs.setCurrentIndex(i)
             
-            # FIXED: Improved signal connections with proper error handling
             if hasattr(browser_tab, 'webview') and browser_tab.webview:
                 try:
-                    # URL changed signal
                     browser_tab.webview.urlChanged.connect(
                         lambda qurl: self.update_tab_title(qurl, browser_tab)
                     )
                     
-                    # Title changed signal
                     browser_tab.webview.titleChanged.connect(
                         lambda title: self.update_tab_title_with_text(title, browser_tab)
                     )
                     
-                    # Load finished signal
                     browser_tab.webview.loadFinished.connect(
                         lambda ok: self.page_load_finished(ok, browser_tab)
                     )
                     
-                    # Set up download handling
                     if hasattr(browser_tab.webview.page(), 'profile'):
                         browser_tab.webview.page().profile().downloadRequested.connect(self.handle_download)
                         
@@ -587,6 +862,13 @@ class WebKitBrowser(QMainWindow):
         self.private_mode = old_private_mode
         return result
         
+    def close_current_tab(self, index):
+        # Close browser when all tabs are closed
+        if self.tabs.count() <= 1:
+            self.close()  # Close the entire browser
+        else:
+            self.tabs.removeTab(index)
+            
     def handle_download(self, download):
         try:
             path = os.path.join(self.download_path, download.suggestedFileName())
@@ -597,6 +879,32 @@ class WebKitBrowser(QMainWindow):
         except Exception as e:
             print(f"Error handling download: {e}")
             self.status_label.setText("Download error occurred")
+    
+    def install_extension(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Install Extension", "", "JSON files (*.json)")
+        if file_path:
+            self.extension_manager.install_extension(file_path)
+            
+    def show_extension_manager(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Extension Manager")
+        dialog.setGeometry(300, 300, 500, 400)
+        
+        layout = QVBoxLayout()
+        
+        ext_list = QListWidget()
+        for ext_id, ext_data in self.extension_manager.extensions.items():
+            ext_list.addItem(f"{ext_data['name']} - {ext_data.get('version', '1.0')}")
+            
+        layout.addWidget(QLabel("Installed Extensions:"))
+        layout.addWidget(ext_list)
+        
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.close)
+        layout.addWidget(close_btn)
+        
+        dialog.setLayout(layout)
+        dialog.exec_()
         
     def update_tab_title(self, qurl, browser_tab):
         try:
@@ -607,7 +915,6 @@ class WebKitBrowser(QMainWindow):
                     domain = domain[:17] + "..."
                 self.tabs.setTabText(i, domain)
                 
-            # Update URL bar if this is the current tab
             if browser_tab == self.tabs.currentWidget():
                 self.url_bar.setText(qurl.toString())
         except Exception as e:
@@ -660,12 +967,6 @@ class WebKitBrowser(QMainWindow):
             self.save_history()
         except Exception as e:
             print(f"Error adding to history: {e}")
-        
-    def close_current_tab(self, index):
-        if self.tabs.count() > 1:
-            self.tabs.removeTab(index)
-        else:
-            QMessageBox.warning(self, "Warning", "At least one tab must remain open.")
             
     def current_browser(self):
         current_widget = self.tabs.currentWidget()
@@ -676,9 +977,7 @@ class WebKitBrowser(QMainWindow):
         if not url:
             return
             
-        # Simple search detection
         if " " in url and not url.startswith("http") and "." not in url.split()[0]:
-            # Treat as search query
             url = f"https://www.google.com/search?q={url.replace(' ', '+')}"
         elif not url.startswith("http"):
             if "." in url:
@@ -767,7 +1066,7 @@ class WebKitBrowser(QMainWindow):
         if browser:
             QMessageBox.information(self, "Developer Tools", 
                                   "Developer tools feature requires additional setup.")
-            
+                
     def save_bookmarks(self):
         try:
             with open('bookmarks.json', 'w') as f:
@@ -833,8 +1132,20 @@ class WebKitBrowser(QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
+    # FIXED: Set scaling attributes before creating QApplication
+    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, False)
+    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, False)
+    QApplication.setAttribute(Qt.AA_DisableHighDpiScaling, True)
+    
     app = QApplication(sys.argv)
     QApplication.setApplicationName("Enhanced WebKit Browser")
+    
+    # FIXED: Additional scaling fixes
+    try:
+        screen = QGuiApplication.primaryScreen()
+        screen.setProperty("devicePixelRatio", 1.0)
+    except:
+        pass
     
     # Set application style
     app.setStyle('Fusion')
