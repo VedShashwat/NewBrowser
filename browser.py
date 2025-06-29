@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime
 
-# Handle scaling issues before importing PyQt5
+
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
 os.environ["QT_SCALE_FACTOR"] = "1"
