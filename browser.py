@@ -3,7 +3,7 @@ import json
 import os
 from datetime import datetime
 
-# FIXED: Handle scaling issues before importing PyQt5
+# Handle scaling issues before importing PyQt5
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
 os.environ["QT_SCALE_FACTOR"] = "1"
@@ -13,11 +13,12 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QMessageBox, QMenu, QMenuBar,
     QProgressBar, QLabel, QSplitter, QListWidget, QTextEdit, QPushButton,
     QDialog, QFormLayout, QSpinBox, QCheckBox, QComboBox, QGroupBox,
-    QScrollArea, QFrame, QSizePolicy, QShortcut, QInputDialog, QFileDialog
+    QScrollArea, QFrame, QSizePolicy, QShortcut, QInputDialog, QFileDialog,
+    QTabBar, QToolButton
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView, QWebEngineProfile, QWebEngineSettings, QWebEnginePage
-from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, Qt, QThread, pyqtSlot, QPropertyAnimation, QRect
-from PyQt5.QtGui import QIcon, QFont, QKeySequence, QPixmap, QPainter, QColor, QGuiApplication
+from PyQt5.QtCore import QUrl, QTimer, pyqtSignal, Qt, QThread, pyqtSlot, QPropertyAnimation, QRect, QSize
+from PyQt5.QtGui import QIcon, QFont, QKeySequence, QPixmap, QPainter, QColor, QGuiApplication, QContextMenuEvent
 from urllib.parse import urlparse
 from math import ceil
 
@@ -99,7 +100,93 @@ class CircularLoader(QWidget):
         if self.timer.isActive():
             self.timer.stop()
 
-# FIXED: Custom WebEngine classes to handle new tab/window requests
+# FIXED: Properly working Tab Widget with moveable new tab button
+class CustomTabWidget(QTabWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_browser = parent
+        
+        # Create the new tab button
+        self.new_tab_button = QToolButton(self)
+        self.new_tab_button.setText("➕")
+        self.new_tab_button.setFixedSize(45, 45)
+        self.new_tab_button.setToolTip("New Tab")
+        self.new_tab_button.setStyleSheet("""
+            QToolButton {
+                background-color: #f0f0f0;
+                border: 1px solid #c0c0c0;
+                border-radius: 3px;
+                font-size: 14px;
+                font-weight: bold;
+            }
+            QToolButton:hover {
+                background-color: #e0e0e0;
+            }
+            QToolButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        
+        # Connect the button to add new tab
+        self.new_tab_button.clicked.connect(self.on_new_tab_clicked)
+        
+        # Connect signals to update button position
+        self.tabBar().tabMoved.connect(self.update_new_tab_button_position)
+        self.currentChanged.connect(self.update_new_tab_button_position)
+        
+        # Set initial properties
+        self.setTabsClosable(True)
+        self.setMovable(True)
+        
+        # Update button position initially
+        self.update_new_tab_button_position()
+        
+    def on_new_tab_clicked(self):
+        """Handle new tab button click"""
+        if self.parent_browser and hasattr(self.parent_browser, 'add_new_tab'):
+            self.parent_browser.add_new_tab()
+        
+    def update_new_tab_button_position(self):
+        """Update the position of the new tab button"""
+        try:
+            # Calculate total width of all tabs
+            total_width = 0
+            tab_count = self.tabBar().count()
+            
+            for i in range(tab_count):
+                total_width += self.tabBar().tabRect(i).width()
+            
+            # Position the button right after the last tab
+            button_x = total_width + 2  # Small gap
+            button_y = 2  # Small vertical offset
+            
+            # Make sure button doesn't go beyond the widget width
+            max_x = self.width() - self.new_tab_button.width() - 5
+            if button_x > max_x:
+                button_x = max_x
+                
+            self.new_tab_button.move(button_x, button_y)
+            self.new_tab_button.show()
+            
+        except Exception as e:
+            print(f"Error updating new tab button position: {e}")
+    
+    def resizeEvent(self, event):
+        """Handle resize events"""
+        super().resizeEvent(event)
+        self.update_new_tab_button_position()
+        
+    def tabInserted(self, index):
+        """Handle tab insertion"""
+        super().tabInserted(index)
+        self.update_new_tab_button_position()
+        
+    def tabRemoved(self, index):
+        """Handle tab removal"""
+        super().tabRemoved(index)
+        self.update_new_tab_button_position()
+
+# Custom WebEngine classes with proper context menu
 class CustomWebEnginePage(QWebEnginePage):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -109,11 +196,9 @@ class CustomWebEnginePage(QWebEnginePage):
         if hasattr(self.view(), 'browser_window'):
             browser = self.view().browser_window
             if window_type == QWebEnginePage.WebBrowserTab:
-                # Create new tab
                 new_tab = browser.add_new_tab()
                 return new_tab.webview.page() if new_tab else None
             elif window_type == QWebEnginePage.WebBrowserWindow:
-                # Create new window (for now, create new tab)
                 new_tab = browser.add_new_tab()
                 return new_tab.webview.page() if new_tab else None
         return super().createWindow(window_type)
@@ -127,28 +212,103 @@ class CustomWebEngineView(QWebEngineView):
         """Handle requests to open new windows/tabs"""
         if self.browser_window:
             if window_type == QWebEnginePage.WebBrowserTab:
-                # Create new tab
                 new_tab = self.browser_window.add_new_tab()
                 return new_tab.webview if new_tab else None
             elif window_type == QWebEnginePage.WebBrowserWindow:
-                # Create new window (for now, create new tab)
                 new_tab = self.browser_window.add_new_tab()
                 return new_tab.webview if new_tab else None
         return super().createWindow(window_type)
         
     def contextMenuEvent(self, event):
-        """FIXED: Handle right-click context menu"""
-        menu = self.page().createStandardContextMenu()
-        
-        # Find and modify existing actions
-        actions = menu.actions()
-        for action in actions:
-            if action.text() == "Open link in new window":
-                action.setText("Open Link in New Window")
-            elif action.text() == "Open link in new tab":
-                action.setText("Open Link in New Tab")
+        """Handle right-click context menu with proper options"""
+        try:
+            # Create standard context menu
+            menu = self.page().createStandardContextMenu()
+            
+            if menu is None:
+                return
                 
-        menu.popup(event.globalPos())
+            # Get the hit test result to check if we're over a link
+            hit_test = self.page().hitTestContent(event.pos())
+            
+            actions = menu.actions()
+            
+            # Find existing actions and modify them
+            for action in actions:
+                if action.text() == "Open link in new window":
+                    action.setText("Open Link in New Window")
+                    # Connect to our custom handler
+                    action.triggered.disconnect()
+                    action.triggered.connect(lambda: self.open_link_in_new_window(hit_test))
+                elif action.text() == "Open link in new tab":
+                    action.setText("Open Link in New Tab")
+                    # Connect to our custom handler
+                    action.triggered.disconnect()
+                    action.triggered.connect(lambda: self.open_link_in_new_tab(hit_test))
+                elif "Open link" in action.text():
+                    action.setText("Open Link in This Tab")
+                    
+            # If we're over a link, ensure new tab/window options are available
+            if hasattr(hit_test, 'linkUrl') and not hit_test.linkUrl().isEmpty():
+                link_url = hit_test.linkUrl().toString()
+                
+                # Check if new tab/window actions exist, if not add them
+                has_new_tab = any("New Tab" in action.text() for action in actions)
+                has_new_window = any("New Window" in action.text() for action in actions)
+                
+                if not has_new_tab:
+                    new_tab_action = QAction("Open Link in New Tab", menu)
+                    new_tab_action.triggered.connect(lambda: self.open_url_in_new_tab(link_url))
+                    menu.addAction(new_tab_action)
+                    
+                if not has_new_window:
+                    new_window_action = QAction("Open Link in New Window", menu)
+                    new_window_action.triggered.connect(lambda: self.open_url_in_new_tab(link_url))
+                    menu.addAction(new_window_action)
+                    
+                # Add separator and additional options
+                menu.addSeparator()
+                copy_link_action = QAction("Copy Link Address", menu)
+                copy_link_action.triggered.connect(lambda: self.copy_link_to_clipboard(link_url))
+                menu.addAction(copy_link_action)
+                
+            menu.popup(event.globalPos())
+            
+        except Exception as e:
+            print(f"Error in context menu: {e}")
+            # Fallback to default context menu
+            super().contextMenuEvent(event)
+            
+    def open_link_in_new_tab(self, hit_test):
+        """Open link in new tab"""
+        try:
+            if hasattr(hit_test, 'linkUrl') and not hit_test.linkUrl().isEmpty():
+                url = hit_test.linkUrl().toString()
+                self.open_url_in_new_tab(url)
+        except:
+            pass
+            
+    def open_link_in_new_window(self, hit_test):
+        """Open link in new window (for now, opens in new tab)"""
+        try:
+            if hasattr(hit_test, 'linkUrl') and not hit_test.linkUrl().isEmpty():
+                url = hit_test.linkUrl().toString()
+                self.open_url_in_new_tab(url)
+        except:
+            pass
+            
+    def open_url_in_new_tab(self, url):
+        """Open URL in new tab"""
+        if self.browser_window:
+            self.browser_window.add_new_tab(url)
+            
+    def copy_link_to_clipboard(self, url):
+        """Copy link to clipboard"""
+        try:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(url)
+        except Exception as e:
+            print(f"Error copying to clipboard: {e}")
 
 # Extension Manager
 class ExtensionManager:
@@ -492,7 +652,7 @@ class BrowserTab(QWidget):
                 else:
                     url = "https://www.google.com"
             
-            # FIXED: Use custom WebEngine classes
+            # Use custom WebEngine classes
             if private_mode:
                 profile = QWebEngineProfile()
                 self.webview = CustomWebEngineView()
@@ -504,7 +664,7 @@ class BrowserTab(QWidget):
                 page = CustomWebEnginePage()
                 self.webview.setPage(page)
                 
-            # FIXED: Set browser window reference for new tab/window functionality
+            # Set browser window reference for new tab/window functionality
             self.webview.browser_window = self.browser_window
             
             self.webview.setUrl(QUrl(url))
@@ -576,10 +736,8 @@ class WebKitBrowser(QMainWindow):
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # Tab widget setup
-        self.tabs = QTabWidget()
-        self.tabs.setTabsClosable(True)
-        self.tabs.setMovable(True)
+        # FIXED: Use custom tab widget with properly working new tab button
+        self.tabs = CustomTabWidget(self)
         self.tabs.tabCloseRequested.connect(self.close_current_tab)
         self.tabs.currentChanged.connect(self.update_url_bar)
         
@@ -788,16 +946,11 @@ class WebKitBrowser(QMainWindow):
         self.url_bar.returnPressed.connect(self.navigate_to_url)
         nav_bar.addWidget(self.url_bar)
         
-        # Action buttons
+        # Bookmark button
         bookmark_btn = QAction("⭐", self)
         bookmark_btn.setToolTip("Add Bookmark")
         bookmark_btn.triggered.connect(self.add_bookmark)
         nav_bar.addAction(bookmark_btn)
-        
-        new_tab_btn = QAction("➕", self)
-        new_tab_btn.setToolTip("New Tab")
-        new_tab_btn.triggered.connect(self.add_new_tab)
-        nav_bar.addAction(new_tab_btn)
         
     def setup_shortcuts(self):
         refresh_shortcut = QShortcut(QKeySequence("F5"), self)
@@ -817,7 +970,7 @@ class WebKitBrowser(QMainWindow):
             if not url.strip():
                 url = self.homepage
                 
-            # FIXED: Pass browser window reference to tab
+            # Pass browser window reference to tab
             browser_tab = BrowserTab(url, self.private_mode, self)
             
             title = "New Tab"
@@ -1132,7 +1285,7 @@ class WebKitBrowser(QMainWindow):
         event.accept()
 
 if __name__ == "__main__":
-    # FIXED: Set scaling attributes before creating QApplication
+    # Set scaling attributes before creating QApplication
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, False)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, False)
     QApplication.setAttribute(Qt.AA_DisableHighDpiScaling, True)
@@ -1140,7 +1293,7 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     QApplication.setApplicationName("Enhanced WebKit Browser")
     
-    # FIXED: Additional scaling fixes
+    # Additional scaling fixes
     try:
         screen = QGuiApplication.primaryScreen()
         screen.setProperty("devicePixelRatio", 1.0)
